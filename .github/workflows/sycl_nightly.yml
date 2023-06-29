@@ -8,6 +8,7 @@ on:
     paths:
       - 'devops/containers/ubuntu2204_preinstalled.Dockerfile'
       - '.github/workflows/sycl_nightly.yml'
+  push:
 
 jobs:
   test_matrix:
@@ -26,9 +27,15 @@ jobs:
       build_cache_root: "/__w/"
       build_artifact_suffix: default-2204
       build_configure_extra_args: '--hip --cuda --enable-esimd-emulator'
+      # We use the build for the release, override its name and prefer
+      # widespread gzip compression.
+      artifact_archive_name: sycl_linux.tar.gz
+      artifact_compress_command: gzip
+      artifact_decompress_command: gunzip
+      check_filters: '[]'
 
   ubuntu2204_opaque_pointers_build_test:
-    if: github.repository == 'intel/llvm'
+    if: github.repository == 'intel/llvm' && !always()
     uses: ./.github/workflows/sycl_linux_build_and_test.yml
     needs: test_matrix
     secrets: inherit
@@ -42,9 +49,49 @@ jobs:
     name: Windows
     if: github.repository == 'intel/llvm'
     uses: ./.github/workflows/sycl_windows_build_and_test.yml
+    with:
+      check_filters: '[]'
+      # We use the build for the release, override its name.
+      artifact_archive_name: sycl_windows.tar.gz
+
+  nightly_release:
+    name: Nightly Release
+    needs: [ubuntu2204_build_test, windows_default]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/download-artifact@v3
+      with:
+        name: sycl_linux_default-2204
+    - uses: actions/download-artifact@v3
+      with:
+        name: sycl_windows_default
+    - name: Get current date
+      if: github.event_name == 'schedule'
+      run: echo "TAG=$(date +'%Y-%m-%d')" >> "$GITHUB_ENV"
+    - name: Get current date + hash
+      if: github.event_name != 'schedule'
+      # TODO: Use date of the commit?
+      run: echo "TAG=$(date +'%Y-%m-%d')-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+    - name: Finalize tag
+      id: tag
+      run: echo "TAG=${{ env.TAG }}" >> "$GITHUB_OUTPUT"
+    - run: |
+        ls
+        echo "DOING RELEASE nightly-${{ steps.tag.outputs.TAG }}"
+        ls sycl_windows.tar.gz sycl_linux.tar.gz
+    - name: Upload binaries to release
+      if: ${{ !always() }}
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          sycl_linux.tar.gz
+          sycl_windows.tar.gz
+        tag_name: nightly-${{ steps.tag.outputs.TAG }}
+        prerelease: true
+        body: "Nightly release ${{ steps.tag.outputs.TAG }}"
 
   ubuntu2204_docker_build_push:
-    if: github.repository == 'intel/llvm'
+    if: github.repository == 'intel/llvm' && !always()
     runs-on: ubuntu-22.04
     needs: ubuntu2204_build_test
     steps:
