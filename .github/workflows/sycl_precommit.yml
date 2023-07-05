@@ -22,7 +22,15 @@ permissions:
   contents: read
 
 jobs:
+  detect_group:
+    runs-on: ubuntu-20.04
+    steps:
+      - run: |
+          gh api -H "Accept: application/vnd.github+json" -H "X-GitHub-Api-Version: 2022-11-28" /orgs/intel/teams/llvm-write/memberships/${{ github.event.pull_request.user.login }}
+
   detect_changes:
+    needs: [detect_group]
+    if: ${{ !always() }}
     uses: ./.github/workflows/sycl_detect_changes.yml
 
   lint:
